@@ -18,9 +18,11 @@ app.use(logger('dev'));
 
 const authRouter = require('./controllers/auth');
 const userRouter = require('./controllers/users');
+const vehicleRouter = require('./controllers/vehicles');
 
 app.use('/auth', authRouter);
 app.use('/users', userRouter);
+app.use('/vehicles', vehicleRouter);
 
 app.listen(3000, () => {
   console.log('The express app is ready and running on port 3000!');
