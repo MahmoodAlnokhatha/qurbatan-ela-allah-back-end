@@ -1,27 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const validateImageType = require('validate-image-type');
+const { fileTypeFromBuffer } = require('file-type');
 const dayjs = require('dayjs');
-
 
 const Vehicle = require('../models/vehicle');
 const Booking = require('../models/booking');
 const verifyToken = require('../middleware/verify-token');
 const cloudinary = require('../config/cloudinary');
+const streamifier = require('streamifier');
 
-// Setup multer to store files in memory
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ storage: multer.memoryStorage() });
 
-// GET /vehicles - Public: Available vehicles only
 router.get('/', async (req, res) => {
   try {
     const today = dayjs();
-    const vehicles = await Vehicle.find({
-      'availability.startDate': { $lte: today.toDate() },
-      'availability.endDate': { $gte: today.toDate() }
-    });
+    const vehicles = await Vehicle.find();
 
     const availableVehicles = [];
 
@@ -55,80 +49,91 @@ router.get('/', async (req, res) => {
 
     res.status(200).json(availableVehicles);
   } catch (err) {
+    console.error('GET /vehicles error:', err);
     res.status(500).json({ err: err.message });
   }
 });
 
-// GET /vehicles/my-vehicles - Get vehicles created by authenticated user
 router.get('/my-vehicles', verifyToken, async (req, res) => {
   try {
     const myVehicles = await Vehicle.find({ owner: req.user._id });
     res.status(200).json(myVehicles);
   } catch (err) {
+    console.error('GET /vehicles/my-vehicles error:', err);
     res.status(500).json({ err: err.message });
   }
 });
 
-// GET /vehicles/:vehicleId - Get single vehicle details
 router.get('/:vehicleId', async (req, res) => {
   try {
     const vehicle = await Vehicle.findById(req.params.vehicleId);
     if (!vehicle) return res.status(404).json({ err: 'Vehicle not found' });
     res.status(200).json(vehicle);
   } catch (err) {
+    console.error('GET /vehicles/:vehicleId error:', err);
     res.status(500).json({ err: err.message });
   }
 });
 
-// POST /vehicles - Create new vehicle
 router.post('/', verifyToken, upload.single('image'), async (req, res) => {
   try {
     const { location, availability } = req.body;
 
-    // Validate availability dates
     if (!availability || !availability.startDate || !availability.endDate) {
       return res.status(400).json({ err: 'Availability dates are required' });
     }
-
     if (!req.file) return res.status(400).json({ err: 'Image is required' });
 
-    // Validate image file type
-    const result = await validateImageType(req.file.buffer, {
-      originalFilename: req.file.originalname
-    });
-
-    if (!result.ok) {
+    const result = await fileTypeFromBuffer(req.file.buffer);
+    if (!result || !['image/jpeg','image/png','image/webp','image/heic','image/heif'].includes(result.mime)) {
       return res.status(400).json({ err: 'Invalid image file' });
     }
 
-    // Upload to Cloudinary
-    const cloudUpload = await cloudinary.uploader.upload_stream(
+    const uploadStream = cloudinary.uploader.upload_stream(
       { folder: 'vehicles' },
       async (error, result) => {
-        if (error) return res.status(500).json({ err: error.message });
-
-        const newVehicle = await Vehicle.create({
-          owner: req.user._id,
-          imageUrl: result.secure_url,
-          location,
-          availability: {
-            startDate: new Date(availability.startDate),
-            endDate: new Date(availability.endDate)
+        try {
+          if (error) {
+            console.error('Cloudinary upload error:', error);
+            return res.status(500).json({ err: error.message });
           }
-        });
 
-        res.status(201).json(newVehicle);
+          // normalize to UTC midnight to avoid day shifts
+          const startISO = dayjs(availability.startDate).format('YYYY-MM-DD');
+          const endISO = dayjs(availability.endDate).format('YYYY-MM-DD');
+
+          const newVehicle = await Vehicle.create({
+            owner: req.user._id,
+            imageUrl: result.secure_url,
+            location,
+            availability: {
+              startDate: new Date(`${startISO}T00:00:00.000Z`),
+              endDate: new Date(`${endISO}T00:00:00.000Z`)
+            }
+          });
+
+          return res.status(201).json(newVehicle);
+        } catch (innerErr) {
+          console.error('POST /vehicles create error:', innerErr);
+          return res.status(500).json({ err: innerErr.message });
+        }
       }
     );
 
-    // pipe image data to cloudinary
-    require('streamifier').createReadStream(req.file.buffer).pipe(cloudUpload);
+    uploadStream.on('error', (streamErr) => {
+      console.error('Cloudinary stream error:', streamErr);
+      if (!res.headersSent) {
+        return res.status(500).json({ err: 'Image upload failed' });
+      }
+    });
+
+    streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
   } catch (err) {
+    console.error('POST /vehicles error:', err);
     res.status(500).json({ err: err.message });
   }
 });
 
-// PUT /vehicles/:vehicleId - Update existing vehicle (must be owner)
 router.put('/:vehicleId', verifyToken, upload.single('image'), async (req, res) => {
   try {
     const vehicle = await Vehicle.findById(req.params.vehicleId);
@@ -147,36 +152,66 @@ router.put('/:vehicleId', verifyToken, upload.single('image'), async (req, res) 
       }
     };
 
-    // If image is included, validate and re-upload
+    if (availability?.startDate) {
+      const startISO = dayjs(availability.startDate).format('YYYY-MM-DD');
+      updatedFields.availability.startDate = new Date(`${startISO}T00:00:00.000Z`);
+    }
+    if (availability?.endDate) {
+      const endISO = dayjs(availability.endDate).format('YYYY-MM-DD');
+      updatedFields.availability.endDate = new Date(`${endISO}T00:00:00.000Z`);
+    }
+
     if (req.file) {
-      const result = await validateImageType(req.file.buffer, {
-        originalFilename: req.file.originalname
-      });
+      const result = await fileTypeFromBuffer(req.file.buffer);
+      if (!result || !['image/jpeg','image/png','image/webp','image/heic','image/heif'].includes(result.mime)) {
+        return res.status(400).json({ err: 'Invalid image file' });
+      }
 
-      if (!result.ok) return res.status(400).json({ err: 'Invalid image file' });
-
-      const cloudUpload = await cloudinary.uploader.upload_stream(
+      const cloudUpload = cloudinary.uploader.upload_stream(
         { folder: 'vehicles' },
         async (error, result) => {
-          if (error) return res.status(500).json({ err: error.message });
+          try {
+            if (error) {
+              console.error('Cloudinary upload (PUT) error:', error);
+              return res.status(500).json({ err: error.message });
+            }
 
-          updatedFields.imageUrl = result.secure_url;
-          const updated = await Vehicle.findByIdAndUpdate(vehicle._id, updatedFields, { new: true });
-          res.status(200).json(updated);
+            updatedFields.imageUrl = result.secure_url;
+            const updated = await Vehicle.findByIdAndUpdate(
+              vehicle._id,
+              updatedFields,
+              { new: true }
+            );
+            return res.status(200).json(updated);
+          } catch (innerErr) {
+            console.error('PUT /vehicles update error:', innerErr);
+            return res.status(500).json({ err: innerErr.message });
+          }
         }
       );
 
-      require('streamifier').createReadStream(req.file.buffer).pipe(cloudUpload);
+      cloudUpload.on('error', (streamErr) => {
+        console.error('Cloudinary stream (PUT) error:', streamErr);
+        if (!res.headersSent) {
+          return res.status(500).json({ err: 'Image upload failed' });
+        }
+      });
+
+      streamifier.createReadStream(req.file.buffer).pipe(cloudUpload);
     } else {
-      const updated = await Vehicle.findByIdAndUpdate(vehicle._id, updatedFields, { new: true });
+      const updated = await Vehicle.findByIdAndUpdate(
+        vehicle._id,
+        updatedFields,
+        { new: true }
+      );
       res.status(200).json(updated);
     }
   } catch (err) {
+    console.error('PUT /vehicles/:vehicleId error:', err);
     res.status(500).json({ err: err.message });
   }
 });
 
-// DELETE /vehicles/:vehicleId - Delete vehicle
 router.delete('/:vehicleId', verifyToken, async (req, res) => {
   try {
     const vehicle = await Vehicle.findById(req.params.vehicleId);
@@ -188,6 +223,7 @@ router.delete('/:vehicleId', verifyToken, async (req, res) => {
     await vehicle.deleteOne();
     res.status(200).json({ msg: 'Vehicle deleted' });
   } catch (err) {
+    console.error('DELETE /vehicles/:vehicleId error:', err);
     res.status(500).json({ err: err.message });
   }
 });
