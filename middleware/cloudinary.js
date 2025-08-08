@@ -5,7 +5,7 @@ const cloudinary = require ('../config/cloudinary')
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: 'qurbatan-vehicles',
+    folder: 'vehicles',
     allowed_formats: ['jpg', 'png', 'jpeg', 'webp', 'heic','heif'],
     public_id: (req, file) => `${Date.now()}-${file.originalname}`
   }
