@@ -24,6 +24,12 @@ It is built with **Node.js**, **Express.js**, and **MongoDB** and provides authe
   - View a user’s own bookings  
   - Prevent overlapping bookings
 
+- **Push Notifications (Web Push)**
+  - Requester gets a browser notification when a booking is **approved** or **rejected**
+  - Uses VAPID keys + Service Worker
+  - Endpoints to fetch public key and save subscriptions
+
+
 ---
 
 ## 📦 Installation
@@ -37,16 +43,51 @@ cd qurbatan-backend
 npm install
 ```
 
+### 🔑 How to Get Web Push VAPID Keys (from scratch)
+
+1. Install the package:
+   ```bash
+   npm i web-push
+   ```
+2. Create a helper file (one-time) to generate keys:
+```bash
+touch tools/genVAPID.js
+```
+```js
+const webpush = require('web-push');
+const keys = webpush.generateVAPIDKeys();
+console.log(keys);
+```
+3. Run it:
+```bash
+node tools/genVAPID.js
+```
+Copy the publicKey and privateKey.
+4. Put them in your .env:
+```
+VAPID_PUBLIC_KEY=PASTE_PUBLIC_KEY
+VAPID_PRIVATE_KEY=PASTE_PRIVATE_KEY
+```
+5. Delete the generator file (to keep repo clean):
+```bash
+rm tools/genVAPID.js
+```
+
+
 - **⚙️ Environment Variables**
 #### Create a .env file in the project root:
 ```javaScript
 PORT=3000
-MONGO_URI=mongodb
+MONGODB_URI=mongodb
 JWT_SECRET=your_jwt_secret_here
+FRONTEND_ORIGIN=http://localhost:5173
 //Cloudinary
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
+//Web Push
+VAPID_PUBLIC_KEY=your_vapid_public_key
+VAPID_PRIVATE_KEY=your_vapid_private_key
 ```
 #### ▶️ Running the Server
 ```bash
@@ -57,12 +98,11 @@ nodemon
 
 ## 📂 Project Structure
 ---
-```
+``` bash
 backend/
   ├── config/
   │   └── cloudinary.js        # Cloudinary configuration
   ├── middleware/
-  │   ├── cloudinary.js        # Cloudinary storage
   │   └── verify-token.js      # JWT verification middleware
   ├── models/
   │   ├── user.js              # User schema
@@ -71,6 +111,7 @@ backend/
   ├── controllers/
   │   ├── auth.js              # Auth routes (sign up, sign in)
   │   ├── vehicles.js          # Vehicle CRUD routes
+  │   ├── push.js              # push notification
   │   └── bookings.js          # Booking routes
   ├── server.js                # Express app entry point
   └── package.json
@@ -104,6 +145,14 @@ backend/
 | :----: | :-------: | :---: | :----------:|
 | POST   | /bookings | ✅ | Create a booking |
 | POST   | /bookings/my | ✅ | Get current user's bookings |
+
+### Push Notifications
+
+| Method | Endpoint         | Auth? | Description |
+| ------ | ---------------- | ----- | ----------- |
+| GET    | /push/public-key | ❌    | Get VAPID public key |
+| POST   | /push/subscribe  | ✅    | Subscribe user to push notifications |
+
 ---
 
 ## 🖼️ Image Upload
