@@ -4,6 +4,32 @@ const Booking = require('../models/booking');
 const Vehicle = require('../models/vehicle');
 const verifyToken = require('../middleware/verify-token');
 const dayjs = require('dayjs');
+const webpush = require('web-push');
+const PushSub = require('../models/pushSub');
+
+const notifyBookingStatus = async (booking) => {
+  const subs = await PushSub.find({ user: booking.requester });
+
+  const payload = JSON.stringify({
+    title: 'Booking update',
+    body: `Your booking is ${booking.status}.`,
+    url: '/bookings'             // where to open on click (adjust if needed)
+  });
+
+  for (const s of subs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: s.endpoint, keys: s.keys },
+        payload
+      );
+    } catch (err) {
+      // cleanup expired/invalid subs
+      if (err.statusCode === 410 || err.statusCode === 404) {
+        try { await s.deleteOne(); } catch (_) {}
+      }
+    }
+  }
+};
 
 router.post('/', verifyToken, async (req, res) => {
   try {
@@ -93,6 +119,11 @@ router.patch('/:id/status', verifyToken, async (req, res) => {
 
     booking.status = status;
     await booking.save();
+
+    notifyBookingStatus(booking).catch(e =>
+      console.error('Push notify failed:', e.message)
+    );
+
     res.status(200).json(booking);
   } catch (err) {
     res.status(500).json({ err: err.message });
