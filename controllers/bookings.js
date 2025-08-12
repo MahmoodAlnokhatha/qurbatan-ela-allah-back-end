@@ -95,8 +95,9 @@ router.get('/owner', verifyToken, async (req, res) => {
       .populate({
         path: 'vehicle',
         match: { owner: req.user._id },
+        select: 'location imageUrl',
       })
-      .populate('requester');
+      .populate('requester','username');
 
     const ownerBookings = bookings.filter(b => b.vehicle !== null);
 
