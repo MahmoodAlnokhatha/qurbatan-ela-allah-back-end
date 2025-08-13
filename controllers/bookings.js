@@ -89,6 +89,24 @@ router.get('/my', verifyToken, async (req, res) => {
   }
 });
 
+router.get('/owner', verifyToken, async (req, res) => {
+  try {
+    const bookings = await Booking.find()
+      .populate({
+        path: 'vehicle',
+        match: { owner: req.user._id },
+        select: 'location imageUrl',
+      })
+      .populate('requester','username');
+
+    const ownerBookings = bookings.filter(b => b.vehicle !== null);
+
+    res.status(200).json(ownerBookings);
+  } catch (err) {
+    res.status(500).json({ err: err.message });
+  }
+});
+
 router.patch('/:id/status', verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
