@@ -43,6 +43,6 @@ app.use('/vehicles', vehicleRouter);
 app.use('/bookings', bookingRouter);
 app.use('/push',pushRouter);
 
-app.listen(3000, () => {
+app.listen(process.env.PORT|| 3000, () => {
   console.log('The express app is ready and running on port 3000!');
 });
