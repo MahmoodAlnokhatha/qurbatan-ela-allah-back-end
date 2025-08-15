@@ -15,7 +15,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/', async (req, res) => {
   try {
     const today = dayjs();
-    const vehicles = await Vehicle.find();
+    const vehicles = await Vehicle.find().populate('owner', 'username');
 
     const availableVehicles = [];
 
@@ -56,7 +56,7 @@ router.get('/', async (req, res) => {
 
 router.get('/my-vehicles', verifyToken, async (req, res) => {
   try {
-    const myVehicles = await Vehicle.find({ owner: req.user._id });
+    const myVehicles = await Vehicle.find({ owner: req.user._id }).populate('owner', 'username');
     res.status(200).json(myVehicles);
   } catch (err) {
     console.error('GET /vehicles/my-vehicles error:', err);
@@ -66,7 +66,7 @@ router.get('/my-vehicles', verifyToken, async (req, res) => {
 
 router.get('/:vehicleId', async (req, res) => {
   try {
-    const vehicle = await Vehicle.findById(req.params.vehicleId);
+    const vehicle = await Vehicle.findById(req.params.vehicleId).populate('owner', 'username');
     if (!vehicle) return res.status(404).json({ err: 'Vehicle not found' });
     res.status(200).json(vehicle);
   } catch (err) {
@@ -112,7 +112,8 @@ router.post('/', verifyToken, upload.single('image'), async (req, res) => {
             }
           });
 
-          return res.status(201).json(newVehicle);
+          const populated = await Vehicle.findById(newVehicle._id).populate('owner', 'username');
+return res.status(201).json(populated);
         } catch (innerErr) {
           console.error('POST /vehicles create error:', innerErr);
           return res.status(500).json({ err: innerErr.message });
@@ -178,11 +179,13 @@ router.put('/:vehicleId', verifyToken, upload.single('image'), async (req, res) 
 
             updatedFields.imageUrl = result.secure_url;
             const updated = await Vehicle.findByIdAndUpdate(
-              vehicle._id,
-              updatedFields,
-              { new: true }
-            );
-            return res.status(200).json(updated);
+  vehicle._id,
+  updatedFields,
+  { new: true }
+);
+const populated = await Vehicle.findById(updated._id).populate('owner', 'username');
+return res.status(200).json(populated);
+
           } catch (innerErr) {
             console.error('PUT /vehicles update error:', innerErr);
             return res.status(500).json({ err: innerErr.message });
@@ -211,6 +214,31 @@ router.put('/:vehicleId', verifyToken, upload.single('image'), async (req, res) 
     res.status(500).json({ err: err.message });
   }
 });
+
+// START OF THE VALIDATION OF THE DATE BOOKING
+
+router.get('/:vehicleId/availability', async (req, res) => {
+  try {
+    const vehicle = await Vehicle.findById(req.params.vehicleId);
+    if (!vehicle) return res.status(404).json({ err: 'Vehicle not found' });
+const bookings = await Booking.find({ vehicle: vehicle._id }).select('startDate endDate');
+res.status(200).json({
+      availability: {
+        startDate: vehicle.availability.startDate,
+        endDate: vehicle.availability.endDate,
+      },
+      bookings: bookings.map(b => ({
+        startDate: b.startDate,
+        endDate: b.endDate,
+      })),
+    });
+  } catch (err) {
+    console.error('GET /vehicles/:vehicleId/availability error:', err);
+    res.status(500).json({ err: err.message });
+  }
+});
+
+// END OF THE VALIDATION
 
 router.delete('/:vehicleId', verifyToken, async (req, res) => {
   try {
